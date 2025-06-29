@@ -1,3 +1,61 @@
+// struct CharacterPosition{
+//     float x;
+//     float y;
+//     float z;
+// };
+// struct CharacterAcceleration{
+//     float x;
+//     float y;
+//     float z;
+// };
+// struct PracticePosition{
+//     float x;
+//     float y;
+//     float z;
+// };
+// struct CameraRotation{
+//     float x;
+//     float z;
+// };
+// struct Character{
+//     CharacterPosition     position;
+//     CameraRotation        camera_rotation;
+//     CharacterAcceleration acceleration @ 0x3B;
+// };
+// struct SaveFile{
+//     Character character     @ 0x04;
+//     s32       max_height    @ 0x18;
+//     s32       longest_fall  @ 0x1C;
+//     float     current_time  @ 0x20;
+//     float     shortest_time @ 0x24;
+//     u8        run_complete  @ 0x28; // 0x00 - no, 0x01 - yes
+//     s32       run_counter   @ 0x29;
+//     u8        practice_mode @ 0x2D; // 0x00 - no, 0x01 - yes
+//     u8        scout_mode    @ 0x2E; // 0x02, 0x03 - scout mode, other - normal mode
+//     PracticePosition some_practice_coordinate @ 0x2F;
+// };
+// SaveFile save_file @ 0x00;
+
+
+// =============================================================================================================================================================================
+// | 4 bytes | 12 bytes      | 8 bytes  | s32     | s32       | float     | float      | bool      | s32     | bool          | u8         | 12 bytes       | 12 bytes          |
+// | str_val | char_position | rotation | max_hei | long_fall | curr_time | short_time | run_compl | run_cnt | practice_mode | scout_mode | practice_coord | char_acceleration |
+// =============================================================================================================================================================================
+// str_val - some strange value
+// char_position - character coordinates (3 floats: x,y,z)
+// rotation - character camera rootation (2 floats: x,z)
+// max_hei - max height on this map
+// long_fall - longest fall on this map
+// curr_time - current time (1 float: in minutes)
+// short_time - shortest time on this map (1 float: in minutes)
+// run_compl - is run complete
+// run_cnt - how many run u did on this map
+// practice_mode - practice mode indicator (dont know much)
+// scout_mode - is scouting mode is on
+// practice_coord - some coorinates that practice mode store (dont know much)
+// char_acceleration - character acceleration (3 floats: x,y,z)
+
+
 // #define UNICODE
 #include <windows.h>
 #include <stdio.h>
@@ -12,11 +70,13 @@ const std::string config_file_name = ".\\config";
 const std::string internal_save_folder = ".\\saves\\";
 const std::string internal_backup_save_folder = ".\\saves\\backup\\";
 const std::string bb_save_folder = std::string{getenv("userprofile")} + "\\appdata\\LocalLow\\Jan Malitschek\\BetonBrutal\\Game\\";
-const std::string save_files[2] = {"Stats.dat", "DLC1Stats.dat"};
+const std::string save_files[3] = {"Stats.dat", "DLC1Stats.dat", "BirthdayStats.dat"};
 static int current_command = 0;
 static bool redirect_input = false;
 static std::string input_str = "";
 static std::vector<int> config_input = {};
+static std::vector<std::string> last_list_save_files = {};
+static long long int input_selected_save_file_i = -1;
 
 const std::map<int,std::string> config_keys{
     {0x01, "Left mouse button"},     {0x02, "Right mouse button"},
@@ -174,6 +234,31 @@ int inputProcessing(int key_stroke, int scan_code){
             char tmp_character = (lowercase) ? '-' : '_';
             input_str += tmp_character;
             printf("%c", tmp_character);
+        }else if(current_command == assigned_values.at("load") && (key_stroke == 0x26 || key_stroke == 0x28)){   // UP_ARROW / DOWN_ARROW
+            std::string selected_file = "";
+            
+            if(input_selected_save_file_i >= (long long int)last_list_save_files.size() || input_selected_save_file_i < 0){
+                input_selected_save_file_i = -1;
+            }
+            if(key_stroke == 0x26){
+                if(input_selected_save_file_i == -1){
+                    input_selected_save_file_i = (long long int)(last_list_save_files.size())-1;
+                }else{
+                    input_selected_save_file_i--;
+                }
+            }else if(key_stroke == 0x28){
+                input_selected_save_file_i++;
+            }
+
+            if(input_selected_save_file_i >= (long long int)last_list_save_files.size() || input_selected_save_file_i < 0){
+                input_selected_save_file_i = -1;
+            }else{
+                selected_file = last_list_save_files[input_selected_save_file_i];
+            }
+
+            printf("\r%*c", (int)(input_str.size()+17), ' ');
+            printf("\renter file name: %s", selected_file.c_str());
+            input_str = selected_file;
         }
     }
 
@@ -380,6 +465,8 @@ int loadConfig(){
 }
 
 void listSaveFiles(){
+    last_list_save_files.clear();
+
     unsigned char which_stats;
     std::ifstream which_stats_file((bb_save_folder + "WhichStats.dat").c_str(),std::ios::binary);
     which_stats_file.read((char*)&which_stats,1);
@@ -387,8 +474,8 @@ void listSaveFiles(){
 
     std::vector<std::string> file_names;
     std::vector<FILETIME> file_lwtimes;
-    WIN32_FIND_DATA find_data; 
-    
+    WIN32_FIND_DATA find_data;
+
     HANDLE handle_find = FindFirstFile((internal_backup_save_folder + "*").c_str(),&find_data); 
     if(handle_find != INVALID_HANDLE_VALUE){
         while(FindNextFile(handle_find,&find_data) != 0){
@@ -438,6 +525,7 @@ void listSaveFiles(){
         int space_number = max_file_name_size - file_names[i].size() + 10;
         printf("- %s%*c", file_names[i].c_str(), space_number,' ');
         printf("%i.%i.%i %02i:%02i\n", tmp_lwtime.wYear,tmp_lwtime.wMonth,tmp_lwtime.wDay, tmp_lwtime.wHour,tmp_lwtime.wMinute);
+        last_list_save_files.push_back(file_names[i]);
     }
 }
 
