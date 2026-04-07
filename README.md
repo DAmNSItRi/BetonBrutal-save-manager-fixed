@@ -18,7 +18,7 @@ To simply run bb_save, run the bb_save.exe together with Beton Brutal
 
 - quicksave : to create a quicksave press F5 and exit settings, your current progress saved.
 - quickload : to load quicksave press F9 and exit settings, you load last quicksave.
-- save      : to create noraml save press F1 and open console where the bb_save is running and type
+- save      : to create normal save press F1 and open console where the bb_save is running and type
               what you want to name save file with current progress.
 - load      : to load normal save (or any other save) press F2 and open console where the bb_save is
               running and type the name of save file that you want to load.
@@ -57,6 +57,14 @@ you can install bb_save from Releases
 ```
 or
 ```sh
-& g++ -o bb_save main.cpp -std=c++14 -Wall -Wformat
+& g++ -o bb_save main.cpp -std=c++14 -Wall -Wformat -lpsapi
 ```
 (one file, so it's not very difficult)
+
+## Changelog
+
+### Fixed
+- Fixed save file listing for DLC maps (which_stats > 9)
+- Fixed max_qsave_history config parsing
+- Added process verification for window security
+- Added console messages for quicksave/quickload

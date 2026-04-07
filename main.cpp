@@ -58,6 +58,7 @@
 
 // #define UNICODE
 #include <windows.h>
+#include <psapi.h>
 #include <stdio.h>
 #include <string.h>
 #include <string>
@@ -76,6 +77,7 @@ static bool redirect_input = false;
 static std::string input_str = "";
 static std::vector<int> config_input = {};
 static std::vector<std::string> last_list_save_files = {};
+static std::vector<FILETIME> last_list_save_files_times = {};
 static long long int input_selected_save_file_i = -1;
 
 const std::map<int,std::string> config_keys{
@@ -153,7 +155,7 @@ int setupFolders();
 void exitRoutine(int exit_code);
 BOOL WINAPI ctrlRoutine(DWORD fdwCtrlType);
 int loadConfig();
-void listSaveFiles();
+int listSaveFiles(unsigned char which_stats, std::vector<std::string>& out_file_names, std::vector<FILETIME>& out_file_times);
 void quicksaveBackup(unsigned char which_stats);
 int save(std::string input_file_name);
 int load(std::string input_file_name);
@@ -295,32 +297,74 @@ int inputProcessing(int key_stroke, int scan_code){
     }
 
 	if(foreground){
-        char window_title[100];
-		GetWindowTextA(foreground,(LPSTR)window_title,100);
-        if(memcmp(window_title,"BetonBrutal",12) == 0){
+        char window_title[256];
+		GetWindowTextA(foreground,(LPSTR)window_title,256);
+        
+        // Fixed: More secure window title verification
+        // 1. Case-insensitive comparison
+        // 2. Verify process ownership - only accept if window belongs to BetonBrutal process
+        bool is_valid_window = false;
+        
+        // Convert to lowercase for comparison
+        std::string title_lower = window_title;
+        for(char& c : title_lower) c = (char)tolower((unsigned char)c);
+        
+        // Check for "betonbrutal" substring
+        if(title_lower.find("betonbrutal") != std::string::npos){
+            // Additional verification: check if the process is actually BetonBrutal
+            DWORD process_id;
+            GetWindowThreadProcessId(foreground, &process_id);
+            
+            // Open the process to verify it's the game
+            HANDLE process_handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, process_id);
+            if(process_handle){
+                char process_name[MAX_PATH] = {0};
+                if(GetModuleBaseNameA(process_handle, NULL, process_name, MAX_PATH) > 0){
+                    // Check if process name contains "BetonBrutal" (case insensitive)
+                    std::string proc_lower = process_name;
+                    for(char& c : proc_lower) c = (char)tolower((unsigned char)c);
+                    if(proc_lower.find("betonbrutal") != std::string::npos){
+                        is_valid_window = true;
+                    }
+                }
+                CloseHandle(process_handle);
+            }
+        }
+        
+        if(is_valid_window){
             int status = 0;
             if(key_stroke == assigned_values.at("quicksave")){
                 status = save("quicksave");
                 if(status != 0){
                     exitRoutine(1);
                 }
+                printf("\nquicksave created\n");
             }else if(key_stroke == assigned_values.at("quickload")){
                 status = load("quicksave");
                 if(status != 0){
                     printf("something went wrong!\n");
                     exitRoutine(1);
                 }
+                printf("\nquicksave loaded\n");
             }else if(key_stroke == assigned_values.at("save")){
                 redirect_input = true;
                 current_command = assigned_values.at("save");
                 system("cls");
-                listSaveFiles();
+                unsigned char which_stats;
+                std::ifstream which_stats_file((bb_save_folder + "WhichStats.dat").c_str(),std::ios::binary);
+                which_stats_file.read((char*)&which_stats,1);
+                which_stats_file.close();
+                listSaveFiles(which_stats, last_list_save_files, last_list_save_files_times);
                 printf("-------- save file --------\nenter file name: ");
             }else if(key_stroke == assigned_values.at("load")){
                 redirect_input = true;
                 current_command = assigned_values.at("load");
                 system("cls");
-                listSaveFiles();
+                unsigned char which_stats;
+                std::ifstream which_stats_file((bb_save_folder + "WhichStats.dat").c_str(),std::ios::binary);
+                which_stats_file.read((char*)&which_stats,1);
+                which_stats_file.close();
+                listSaveFiles(which_stats, last_list_save_files, last_list_save_files_times);
                 printf("-------- load file --------\nenter file name: ");
             }
         }
@@ -453,41 +497,50 @@ int loadConfig(){
                 }
             }
             if(!tmp_flag){
-                config_file.close();
-                return 3;
+                // Check if this is max_qsave_history and parse as number
+                if(function == "max_qsave_history"){
+                    assigned_values[function] = std::stoi(key);
+                    tmp_flag = true;
+                }
+                if(!tmp_flag){
+                    config_file.close();
+                    return 3;
+                }
             }
         }
     }
     config_file.close();
-    assigned_values["max_qsave_history"] -= 0x30;
 
     return 0;
 }
 
-void listSaveFiles(){
-    last_list_save_files.clear();
-
-    unsigned char which_stats;
-    std::ifstream which_stats_file((bb_save_folder + "WhichStats.dat").c_str(),std::ios::binary);
-    which_stats_file.read((char*)&which_stats,1);
-    which_stats_file.close();
+int listSaveFiles(unsigned char which_stats, std::vector<std::string>& out_file_names, std::vector<FILETIME>& out_file_times){
+    out_file_names.clear();
+    out_file_times.clear();
 
     std::vector<std::string> file_names;
     std::vector<FILETIME> file_lwtimes;
     WIN32_FIND_DATA find_data;
+
+    // Fixed: use proper string conversion for which_stats
+    std::string stats_prefix = std::to_string((int)which_stats);
 
     HANDLE handle_find = FindFirstFile((internal_backup_save_folder + "*").c_str(),&find_data); 
     if(handle_find != INVALID_HANDLE_VALUE){
         while(FindNextFile(handle_find,&find_data) != 0){
             if(!(find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)){
                 std::string tmp_file_name = std::string(find_data.cFileName);
-                if(tmp_file_name[0] == std::to_string((int)which_stats)[0] && (int)tmp_file_name.find("_b") != -1){
-                    tmp_file_name.erase(0,1);
-                    file_names.push_back(tmp_file_name);
+                // Fixed: proper prefix matching for multi-digit stats (e.g., DLC with which_stats >= 10)
+                if(tmp_file_name.length() >= stats_prefix.length() && 
+                   tmp_file_name.substr(0, stats_prefix.length()) == stats_prefix &&
+                   (int)tmp_file_name.find("_b") != -1){
+                    std::string save_name = tmp_file_name.substr(stats_prefix.length());
+                    file_names.push_back(save_name);
                     file_lwtimes.push_back(find_data.ftLastWriteTime);
                 }
             }
         }
+        FindClose(handle_find);
     }else{
         printf("something went wrong!\n");
         exitRoutine(1);
@@ -498,13 +551,17 @@ void listSaveFiles(){
         while(FindNextFile(handle_find,&find_data) != 0){
             if(!(find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)){
                 std::string tmp_file_name = std::string(find_data.cFileName);
-                if(tmp_file_name[0] == std::to_string((int)which_stats)[0] && (int)tmp_file_name.find('.') == -1){
-                    tmp_file_name.erase(0,1);
-                    file_names.push_back(tmp_file_name);
+                // Fixed: proper prefix matching for multi-digit stats
+                if(tmp_file_name.length() >= stats_prefix.length() && 
+                   tmp_file_name.substr(0, stats_prefix.length()) == stats_prefix &&
+                   (int)tmp_file_name.find('.') == -1){
+                    std::string save_name = tmp_file_name.substr(stats_prefix.length());
+                    file_names.push_back(save_name);
                     file_lwtimes.push_back(find_data.ftLastWriteTime);
                 }
             }
         }
+        FindClose(handle_find);
     }else{
         printf("something went wrong!\n");
         exitRoutine(1);
@@ -525,8 +582,10 @@ void listSaveFiles(){
         int space_number = max_file_name_size - file_names[i].size() + 10;
         printf("- %s%*c", file_names[i].c_str(), space_number,' ');
         printf("%i.%i.%i %02i:%02i\n", tmp_lwtime.wYear,tmp_lwtime.wMonth,tmp_lwtime.wDay, tmp_lwtime.wHour,tmp_lwtime.wMinute);
-        last_list_save_files.push_back(file_names[i]);
+        out_file_names.push_back(file_names[i]);
+        out_file_times.push_back(file_lwtimes[i]);
     }
+    return 0;
 }
 
 void quicksaveBackup(unsigned char which_stats){
